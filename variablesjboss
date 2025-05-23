@@ -1,0 +1,6 @@
+JBOSS_HOME="/opt/jboss"
+USERNAME="jbossadmin"
+PASSWORD="hello123"
+REALM="ManagementRealm"
+IP_ADD="10.10.8.169"
+LOCAL_H="127.0.0.1"

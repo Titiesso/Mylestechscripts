@@ -1,0 +1,13 @@
+#!/bin/bash
+DATABASE_HOME=echo "/var/lib/pgsqlq"
+POSTGRES_VERSION=echo "13"
+POSTGRES_PASSWORD=echo $"hello123"
+DATABASE_USER=echo $"titi"
+DBUSER_PASSWORD=echo $"hello123"
+DATABASE_NAME=echo $"docdb"
+PG_HBA=echo $"/var/lib/pgsql/${POSTGRES_VERSION}/data/pg_hba.conf"
+PG_CONF=echo $"/var/lib/pgsql/${POSTGRES_VERSION}/data/postgres.conf"
+IP_address=echo $"10.10.8.169"
+POSTGRES_PORT=echo $"5432"
+LOCAL_HOST_IP=echo $"127.0.0.1"
+

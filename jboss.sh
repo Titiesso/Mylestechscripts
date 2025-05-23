@@ -8,6 +8,8 @@ echo -e "Installing java"
 
 # Install Jboss
 
+source variablesJboss
+
 echo -e "\nInstalling Jboss from the .tar & zip file"
 
 # extract the compressed file
@@ -35,16 +37,16 @@ echo -e "\n"
 
 # Create a user jbossadmin and add him to the sudoers
 
-sudo su -c "adduser jbossadmin"
-sudo su -c "usermod -aG wheel jbossadmin"
+sudo su -c "adduser $USERNAME"
+sudo su -c "usermod -aG wheel $USERNAME"
 
 # Assign a password to jbossadmin
 
-echo "jbossadmin:passwd123" | sudo chpasswd
+echo "$USERNAME:$PASSWORD" | sudo chpasswd
 
 # Change the ownership of the file jboss
 
-sudo su -c "chown -R jbossadmin:jbossadmin /opt/jboss*"
+sudo su -c "chown -R $USERNAME:$USERNAME $JBOSS_HOME/*"
  
 
 ### steps before running Jboss###
@@ -62,7 +64,7 @@ cp standalone.xml standalone-bkp.xml
 
 #---- step3 ---- socket-binding ( or bind the application server to network and interface)
 
-sed -i 's/127.0.0.1/10.10.8.169/g' /opt/jboss/standalone/configuration/standalone.xml
+sed -i 's/$LOCAL_H/$IP_ADD/g' $JBOSS_HOME/standalone/configuration/standalone.xml
 #sudo su -c "sed -i 's/127.0.0.1/`hostname -i`/g' /opt/jboss/standalone/standalone.xml"
 			
 			#### explanation ####  
@@ -105,10 +107,6 @@ sudo firewall-cmd --zone=public --list-port
 #----step5---- add management user
 
 cd ../../bin
-JBOSS_HOME="/opt/jboss"
-USERNAME="jbossadmin"
-PASSWORD="hello123"
-REALM="ManagementRealm"
 
 ### Run add-user utility ###
 

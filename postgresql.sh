@@ -15,7 +15,9 @@ sudo su -c "dnf update -y"
 sudo su -c "yum module list | grep postgres"
 # Choose the postgreSQL version to install
 
-POSTGRES_VERSION="13" # We can change it to 12, 14 etc. if needed
+source variablespostgres
+
+POSTGRES_VERSION=$version
 
 # Check if PostgreSQL is already installed
 
@@ -48,7 +50,7 @@ echo "Initializing PostgreSQL database..."
 
 # Set a password for Postgres User
 
-passwd postgres
+echo "postgres:$POSTGRES_PASSWORD" | sudo chpasswd
 
 sleep 1
 
@@ -63,7 +65,7 @@ sleep 1
 
 #Create a user in the database
 
-CREATE USER titi WITH PASSWORD 'hello123'
+CREATE USER $DATABASE_USER WITH PASSWORD $DBUSER_PASSWORD
 
 #Check if the user has been created
 
@@ -71,13 +73,13 @@ CREATE USER titi WITH PASSWORD 'hello123'
 
 #Create a database
 
-CREATE DATABASE docdb OWNER titi
+CREATE DATABASE $DATABASE_NAME OWNER $DATABASE_USER
 
 \l
 
 #Grant all privileges
 
-GRANT ALL PRIVILEGES ON DATABASE docdb TO titi
+GRANT ALL PRIVILEGES ON DATABASE $DATABASE_NAME TO $DATABASE_USER
 
 \q
 
@@ -97,27 +99,24 @@ sleep 2
 
 sudo su -c "systemctl stop postgresql.service"
 
-#Edit config file
+#Take a backup and edit the config file 
 
-PG_HBA="/var/lib/pgsql/${POSTGRES_VERSION}/data/pg_hba.conf"
-
-PG_CONF="/var/lib/pgsql/${POSTGRES_VERSION}/data/postgres.conf"
 
 #Take a backup of pg_hba.conf and postgres.conf
 
-cp "$PG_HBA" "PG_HBA-BK"
+cp $PG_HBA $PG_HBA-BK
 
 sleep 1
 
-cp "PG_CONF" "PG_CONF-BK"
+cp $PG_CONF $PG_CONF-BK
 
 #Configure the authentication and listening address
 
 sudo su - postgres
 
-cd /var/lib/pgsql/${POSTGRES_VERSION}/data/postgresql.conf
+cd $DATABASE_HOME/${POSTGRES_VERSION}/data/postgresql.conf
 
-echo "listen_addresses = '10.10.8.169'" >> /var/lib/pgsql/${POSTGRES_VERSION}/data/postgresql.conf
+echo "$IP_address" >> $DATABASE_HOME/${POSTGRES_VERSION}/data/postgresql.conf
 
 sleep 2
 
@@ -129,20 +128,30 @@ echo
 if systemctl is-active --quiet firewall; then
 	echo "Configuring firewall for PostgreSQL..."
 
-sudo su -c "firewall-cmd --zone=public --add-port=5432/tcp --permanent"
+sudo su -c "firewall-cmd --zone=public --add-port=$POSTGRES_PORT/tcp --permanent"
 sudo su -c "firewall-cmd --add-service=postgresql --permanent"
 sudo su -c "firewall-cmd --reload"
-
+sudo su -c "systemctl restart postgresql.service"
 fi
 
 # Set up the local access
 
-PG_HBA="/var/lib/pgsql/${POSTGRES_VERSION}/data/pg_hba.conf"
-PG_CONF=
 echo "Backing up pg_hba.conf..."
 
-cp "$PG_CONFIG" "${PG_CONFIGBK"
+cp "${PG_CONFIG}" "${PG_CONFIGBK}"
 
+cp "${PG_HBA}" "${PG_HBABK}"
+
+sudo su -c "systemctl stop postgresql.service"
+
+sudo su -c echo "listen_addresses = '*'" > ${DATABASE_HOME}/data/postgresql.conf
+
+sudo su -c echo "host    all             all             $IP_address/32          md5" > $DATABASE_HOME/data/pg_hba.conf
+
+sudo su -c "systemctl restart postgresql.service"
+
+
+                                         
 
 
 
