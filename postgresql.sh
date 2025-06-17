@@ -1,160 +1,193 @@
 #!/bin/bash
 
-# This script will :
-#	-Install PostgreSQL server 
-#	-Initialize the database
-#	-Enable and start the PostgreSQL service
-#	-Set up basic security (firewall and local access)
-#	-set up local access
+# This script will:
+#   - Install PostgreSQL server 
+#   - Initialize the database
+#   - Enable and start the PostgreSQL service
+#   - Set up basic security (firewall and local access)
+#   - Create database user and database
 
-# Update system packages
+set -e  # Exit on any error
 
-echo "Updating system packages..."
-sudo su -c "dnf update -y"
-# Check the module
-sudo su -c "yum module list | grep postgres"
-# Choose the postgreSQL version to install
-
-source variablespostgres
-
-POSTGRES_VERSION=$version
-
-# Check if PostgreSQL is already installed
-
-rpm -qa | grep -q "postgresql${POSTGRES_VERSION}-server" 
-
-if [ $? -eq 0 ]; then
-	echo "PostgreSQL ${POSTGRES_VERSION} is already installed."
-	
+# Source variables file
+if [ -f "variablespostgres" ]; then
+    source variablespostgres
 else
-
-sudo su -c "yum install @postgresql:${POSTGRES_VERSION} -y"	
-	
-fi	
-	echo "Checking if service is running..."
-
-# Check if service is running
-
-
-if systemctl is-active --quiet postgresql-${POSTGRES_VERSION}; then
-	echo "PostgreSQL service is running."
-else
-	echo "PostgreSQL service is not running."
-
-
-# Initialize the database
-
-echo "Initializing PostgreSQL database..."
-
-/usr/psql-${POSTGRES_VERSION}/bin/postgresql-${POSTGRES_VERSION}-setup initdb
-
-# Set a password for Postgres User
-
-echo "postgres:$POSTGRES_PASSWORD" | sudo chpasswd
-
-sleep 1
-
-#Become the postgres user
-
-sudo -i -u postgres
-# Go into database cli
-
-psql
-
-sleep 1
-
-#Create a user in the database
-
-CREATE USER $DATABASE_USER WITH PASSWORD $DBUSER_PASSWORD
-
-#Check if the user has been created
-
-\du
-
-#Create a database
-
-CREATE DATABASE $DATABASE_NAME OWNER $DATABASE_USER
-
-\l
-
-#Grant all privileges
-
-GRANT ALL PRIVILEGES ON DATABASE $DATABASE_NAME TO $DATABASE_USER
-
-\q
-
-# Start and stop PostgreSQL to edit the config files
-
-sudo su -c "systemctl enable postgresql.service"
-
-sleep 2
-
-sudo su -c "sytemctl start postgresql.service"
-
-sleep 2
-
-sudo su -c "systemctl status postgresql.service"
-
-sleep 2
-
-sudo su -c "systemctl stop postgresql.service"
-
-#Take a backup and edit the config file 
-
-
-#Take a backup of pg_hba.conf and postgres.conf
-
-cp $PG_HBA $PG_HBA-BK
-
-sleep 1
-
-cp $PG_CONF $PG_CONF-BK
-
-#Configure the authentication and listening address
-
-sudo su - postgres
-
-cd $DATABASE_HOME/${POSTGRES_VERSION}/data/postgresql.conf
-
-echo "$IP_address" >> $DATABASE_HOME/${POSTGRES_VERSION}/data/postgresql.conf
-
-sleep 2
-
-echo
-
-
-# Set up basic security ( Configuring firewall)
-
-if systemctl is-active --quiet firewall; then
-	echo "Configuring firewall for PostgreSQL..."
-
-sudo su -c "firewall-cmd --zone=public --add-port=$POSTGRES_PORT/tcp --permanent"
-sudo su -c "firewall-cmd --add-service=postgresql --permanent"
-sudo su -c "firewall-cmd --reload"
-sudo su -c "systemctl restart postgresql.service"
+    echo "Error: variablespostgres file not found!"
+    exit 1
 fi
 
-# Set up the local access
+# Set default values if not defined in variables file
+POSTGRES_VERSION=${version:-15}
+POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-defaultPassword123}
+DATABASE_USER=${DATABASE_USER:-appuser}
+DBUSER_PASSWORD=${DBUSER_PASSWORD:-userPassword123}
+DATABASE_NAME=${DATABASE_NAME:-appdb}
+POSTGRES_PORT=${POSTGRES_PORT:-5432}
+IP_ADDRESS=${IP_ADDRESS:-$(hostname -I | awk '{print $1}')}
 
-echo "Backing up pg_hba.conf..."
+# Set PostgreSQL paths
+PG_DATA_DIR="/var/lib/pgsql/${POSTGRES_VERSION}/data"
+PG_HBA="${PG_DATA_DIR}/pg_hba.conf"
+PG_CONF="${PG_DATA_DIR}/postgresql.conf"
 
-cp "${PG_CONFIG}" "${PG_CONFIGBK}"
+echo "=== PostgreSQL ${POSTGRES_VERSION} Installation Script ==="
+echo "Database User: $DATABASE_USER"
+echo "Database Name: $DATABASE_NAME"
+echo "Server IP: $IP_ADDRESS"
+echo ""
 
-cp "${PG_HBA}" "${PG_HBABK}"
+# Update system packages
+echo "Updating system packages..."
+sudo dnf update -y
 
-sudo su -c "systemctl stop postgresql.service"
+# Check available PostgreSQL modules
+echo "Checking available PostgreSQL modules..."
+sudo dnf module list postgresql
 
-sudo su -c echo "listen_addresses = '*'" > ${DATABASE_HOME}/data/postgresql.conf
+# Check if PostgreSQL is already installed
+echo "Checking if PostgreSQL ${POSTGRES_VERSION} is already installed..."
+if rpm -qa | grep -q "postgresql${POSTGRES_VERSION}-server"; then
+    echo "PostgreSQL ${POSTGRES_VERSION} is already installed."
+else
+    echo "Installing PostgreSQL ${POSTGRES_VERSION}..."
+    sudo dnf module enable postgresql:${POSTGRES_VERSION} -y
+    sudo dnf install postgresql${POSTGRES_VERSION}-server postgresql${POSTGRES_VERSION} -y
+fi
 
-sudo su -c echo "host    all             all             $IP_address/32          md5" > $DATABASE_HOME/data/pg_hba.conf
+# Check if database is already initialized
+if [ ! -f "${PG_DATA_DIR}/PG_VERSION" ]; then
+    echo "Initializing PostgreSQL database..."
+    sudo /usr/pgsql-${POSTGRES_VERSION}/bin/postgresql-${POSTGRES_VERSION}-setup initdb
+else
+    echo "PostgreSQL database is already initialized."
+fi
 
-sudo su -c "systemctl restart postgresql.service"
+# Set password for postgres system user
+echo "Setting password for postgres system user..."
+echo "postgres:$POSTGRES_PASSWORD" | sudo chpasswd
 
+# Enable and start PostgreSQL service
+echo "Enabling and starting PostgreSQL service..."
+sudo systemctl enable postgresql-${POSTGRES_VERSION}
+sudo systemctl start postgresql-${POSTGRES_VERSION}
 
-                                         
+# Wait for service to start
+sleep 3
 
+# Check if service is running
+if systemctl is-active --quiet postgresql-${POSTGRES_VERSION}; then
+    echo "PostgreSQL service is running successfully."
+else
+    echo "Error: PostgreSQL service failed to start."
+    sudo systemctl status postgresql-${POSTGRES_VERSION}
+    exit 1
+fi
 
+# Create database user and database
+echo "Creating database user and database..."
+sudo -u postgres psql << EOF
+-- Create user if not exists
+DO \$\$
+BEGIN
+    IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = '$DATABASE_USER') THEN
+        CREATE USER $DATABASE_USER WITH PASSWORD '$DBUSER_PASSWORD';
+        RAISE NOTICE 'User $DATABASE_USER created successfully';
+    ELSE
+        RAISE NOTICE 'User $DATABASE_USER already exists';
+    END IF;
+END
+\$\$;
 
+-- Create database if not exists
+SELECT 'CREATE DATABASE $DATABASE_NAME OWNER $DATABASE_USER'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '$DATABASE_NAME')\gexec
 
+-- Grant privileges
+GRANT ALL PRIVILEGES ON DATABASE $DATABASE_NAME TO $DATABASE_USER;
 
+-- List users and databases
+\du
+\l
 
+\q
+EOF
+
+# Backup configuration files
+echo "Backing up configuration files..."
+sudo cp "$PG_HBA" "${PG_HBA}.backup"
+sudo cp "$PG_CONF" "${PG_CONF}.backup"
+
+# Configure PostgreSQL to listen on all addresses
+echo "Configuring PostgreSQL to accept connections..."
+sudo sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" "$PG_CONF"
+sudo sed -i "s/#port = 5432/port = $POSTGRES_PORT/" "$PG_CONF"
+
+# Configure authentication in pg_hba.conf
+echo "Configuring authentication..."
+# Add remote connection rule
+sudo bash -c "echo 'host    all             all             0.0.0.0/0               md5' >> $PG_HBA"
+
+# Configure firewall
+echo "Configuring firewall for PostgreSQL..."
+if systemctl is-active --quiet firewalld; then
+    sudo firewall-cmd --zone=public --add-port=$POSTGRES_PORT/tcp --permanent
+    sudo firewall-cmd --add-service=postgresql --permanent
+    sudo firewall-cmd --reload
+    echo "Firewall configured successfully."
+else
+    echo "Firewalld is not running - skipping firewall configuration."
+fi
+
+# Restart PostgreSQL to apply configuration changes
+echo "Restarting PostgreSQL to apply configuration changes..."
+sudo systemctl restart postgresql-${POSTGRES_VERSION}
+
+# Wait for service to restart
+sleep 3
+
+# Verify service is running
+if systemctl is-active --quiet postgresql-${POSTGRES_VERSION}; then
+    echo "PostgreSQL service restarted successfully."
+else
+    echo "Error: PostgreSQL service failed to restart."
+    exit 1
+fi
+
+# Test database connection
+echo "Testing database connection..."
+if sudo -u postgres psql -d $DATABASE_NAME -c "SELECT version();" > /dev/null 2>&1; then
+    echo "Database connection test successful."
+else
+    echo "Warning: Database connection test failed."
+fi
+
+# Display connection information
+echo ""
+echo "=== PostgreSQL Installation Complete ==="
+echo "PostgreSQL Version: $POSTGRES_VERSION"
+echo "Service Status: $(systemctl is-active postgresql-${POSTGRES_VERSION})"
+echo "Database Name: $DATABASE_NAME"
+echo "Database User: $DATABASE_USER"
+echo "Server IP: $IP_ADDRESS"
+echo "Port: $POSTGRES_PORT"
+echo ""
+echo "Connection Examples:"
+echo "Local connection:"
+echo "  sudo -u postgres psql -d $DATABASE_NAME"
+echo ""
+echo "Remote connection:"
+echo "  psql -h $IP_ADDRESS -p $POSTGRES_PORT -U $DATABASE_USER -d $DATABASE_NAME"
+echo ""
+echo "Service Management:"
+echo "  sudo systemctl status postgresql-${POSTGRES_VERSION}"
+echo "  sudo systemctl start postgresql-${POSTGRES_VERSION}"
+echo "  sudo systemctl stop postgresql-${POSTGRES_VERSION}"
+echo "  sudo systemctl restart postgresql-${POSTGRES_VERSION}"
+echo ""
+echo "Configuration files:"
+echo "  PostgreSQL config: $PG_CONF"
+echo "  Authentication config: $PG_HBA"
+echo "  Backups: ${PG_CONF}.backup, ${PG_HBA}.backup"
+echo ""
+echo "Installation completed successfully!"
