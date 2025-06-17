@@ -1,136 +1,171 @@
-#!/bin/bash
-
-# Install Java
-
-echo -e "Installing java" 
-#sudo yum install java-17-openjdk -y
- 
-
-# Install Jboss
-
-source variablesJboss
-
-echo -e "\nInstalling Jboss from the .tar & zip file"
-
-# extract the compressed file
-sudo su -c "tar -xvf /tmp/sys-admin/jboss*" >> class
-
-
-# Unzip the jboss file
-sudo su -c "unzip jboss-eap*" >> classzip
-
-
-# Remove the unzip file
-
-# rm jboss-eap-8-0.0.zip
-
-# Copy the jboss folder to /opt
-
-sudo su -c "mv jboss-eap-8.0 /opt"
-
-# Create a symlink for jboss 
-
-sudo su -c "ln -s /opt/jboss-eap-8.0 /opt/jboss"
-
-echo -e "\n\tjboss is installed...Thank you!!!"
-echo -e "\n"
-
-# Create a user jbossadmin and add him to the sudoers
-
-sudo su -c "adduser $USERNAME"
-sudo su -c "usermod -aG wheel $USERNAME"
-
-# Assign a password to jbossadmin
-
-echo "$USERNAME:$PASSWORD" | sudo chpasswd
-
-# Change the ownership of the file jboss
-
-sudo su -c "chown -R $USERNAME:$USERNAME $JBOSS_HOME/*"
- 
-
-### steps before running Jboss###
-
-
-#---- step1 ---- get into the folder
-
-cd /opt/jboss/standalone/configuration
-
-#---- steps2---- switch user and take a backup of standalone.xml file
-
-cp standalone.xml standalone-bkp.xml
-
-
-
-#---- step3 ---- socket-binding ( or bind the application server to network and interface)
-
-sed -i 's/$LOCAL_H/$IP_ADD/g' $JBOSS_HOME/standalone/configuration/standalone.xml
-#sudo su -c "sed -i 's/127.0.0.1/`hostname -i`/g' /opt/jboss/standalone/standalone.xml"
-			
-			#### explanation ####  
-			---------------------
-
-
-# sed = stream editor
-
-# -i = means "in-place"
-
-# s/ = substitute (search and replace)
-
-# g = global ( replace all occurences in the file,not just first one per line).
-
-#---- step4 ---- Allows port
-
-sudo firewall-cmd --zone=public --permanent --add-port=8009/tcp
-
-sudo firewall-cmd --zone=public --permanent --add-port=8080/tcp
-
-sudo firewall-cmd --zone=public --permanent --add-port=9990/tcp
-
-sudo firewall-cmd --reload
-
-sudo firewall-cmd --zone=public --list-port
-
-			
-			#### explanation #####
-			----------------------
-#port 8009 = AJP(Apache JServ Protocol) connector, typically used for integrating with Apache HTTPD (mod_jk/mod_proxy_ajp).In need by Webserver to forward requests to Jboss/Wildfly
-
-#port 8843 = (Secure web traffic) is the default HTTPS port in Jboss/Wildfly.
-
-#port 9990 = For Management Console. It is the default port for JBoss/Wildfly Managemnet interface. Used for Admin access via web browser or for jboss-cli.sh for remote management.
-
-#port 8080 = Default port for HTTP web applications ( unencrypted traffic).
-
-#port 9993 = Managemnet console HTTPS, for Secure Admin access. 
-
-#----step5---- add management user
-
-cd ../../bin
-
-### Run add-user utility ###
-
-$JBOSS_HOME/bin/add-user.sh \
--u "$USERNAME" \
--p "$PASSWORD" \
--r "$REALM" \
---silent \
---enable \
-
-#  Check if user was added 
-
-
-if [ $? -eq 0 ]; then
-	echo "well done,sucessfully added management user: $USERNAME"
+!/bin/bash
+#Source variables file
+if [ -f "variablesjboss" ]; then
+    source variablesjboss
 else
-	echo "Failed to add management user. Check permissions or if user already exists."
-	exit 1
+    echo "Error: variablesJboss file not found!"
+    exit 1
 fi
 
----- step6---- start jboss-eap-8.0
+# Set default values if not defined in variables file
+USERNAME=${USERNAME:-jbossadmin}
+PASSWORD=${PASSWORD:-defaultPassword123}
+REALM=${REALM:-ManagementRealm}
+JBOSS_HOME=${JBOSS_HOME:-/opt/jboss}
+IP_ADD=${IP_ADD:-$(hostname -I | awk '{print $1}')}
+LOCAL_H=${LOCAL_H:-127.0.0.1}
 
-# ./standalone.sh
+# Install Java
+echo -e "Installing Java..."
+sudo yum install java-17-openjdk -y
 
-bash -xxx /opt/jboss/bin/standalone.sh -c standalone.xml -Djboss.server.base.dir=/opt/jboss/standalone & 
+# Verify Java installation
+if ! java -version &>/dev/null; then
+    echo "Error: Java installation failed!"
+    exit 1
+fi
 
+echo -e "\nInstalling JBoss from the .tar & zip file"
 
+# Create temporary directory and navigate to it
+mkdir -p /tmp/jboss-install
+cd /tmp/jboss-install
+
+# Extract the compressed file
+echo "Extracting JBoss archive..."
+if [ -f /tmp/sys-admin/jboss*.tar.gz ]; then
+    sudo tar -xzf /tmp/sys-admin/jboss*.tar.gz
+elif [ -f /tmp/sys-admin/jboss*.tar ]; then
+    sudo tar -xf /tmp/sys-admin/jboss*.tar
+else
+    echo "Error: JBoss tar file not found in /tmp/sys-admin/"
+    exit 1
+fi
+
+# Unzip the JBoss file if it exists
+if [ -f jboss-eap*.zip ]; then
+    echo "Unzipping JBoss EAP..."
+    sudo unzip -q jboss-eap*.zip
+fi
+
+# Remove the zip file after extraction
+if [ -f jboss-eap*.zip ]; then
+    sudo rm jboss-eap*.zip
+fi
+
+# Copy the JBoss folder to /opt
+echo "Moving JBoss to /opt..."
+sudo mv jboss-eap-8.0 /opt/
+
+# Create a symlink for JBoss
+sudo ln -sf /opt/jboss-eap-8.0 /opt/jboss
+
+echo -e "\n\tJBoss is installed...Thank you!!!"
+
+# Create JBoss admin user and add to sudoers
+echo "Creating JBoss admin user: $USERNAME"
+sudo adduser $USERNAME
+
+# Add user to wheel group for sudo access
+sudo usermod -aG wheel $USERNAME
+
+# Assign password to the user
+echo "$USERNAME:$PASSWORD" | sudo chpasswd
+
+# Change ownership of JBoss installation
+echo "Setting ownership of JBoss files..."
+sudo chown -R $USERNAME:$USERNAME /opt/jboss-eap-8.0/
+sudo chown -R $USERNAME:$USERNAME /opt/jboss/
+
+### Steps before running JBoss ###
+
+# Navigate to configuration directory
+cd /opt/jboss/standalone/configuration
+
+# Take backup of standalone.xml file
+echo "Creating backup of standalone.xml..."
+sudo cp standalone.xml standalone-bkp.xml
+
+# Configure socket binding (bind application server to network interface)
+echo "Configuring network binding..."
+sudo sed -i "s/$LOCAL_H/$IP_ADD/g" $JBOSS_HOME/standalone/configuration/standalone.xml
+
+# Configure firewall ports
+echo "Configuring firewall..."
+sudo firewall-cmd --zone=public --permanent --add-port=8009/tcp  # AJP connector
+sudo firewall-cmd --zone=public --permanent --add-port=8080/tcp  # HTTP
+sudo firewall-cmd --zone=public --permanent --add-port=8443/tcp  # HTTPS
+sudo firewall-cmd --zone=public --permanent --add-port=9990/tcp  # Management console HTTP
+sudo firewall-cmd --zone=public --permanent --add-port=9993/tcp  # Management console HTTPS
+sudo firewall-cmd --reload
+
+# Display configured ports
+echo "Configured firewall ports:"
+sudo firewall-cmd --zone=public --list-ports
+
+# Add management user
+echo "Adding management user..."
+cd $JBOSS_HOME/bin
+
+# Run add-user utility
+sudo -u $USERNAME $JBOSS_HOME/bin/add-user.sh \
+    -u "$USERNAME" \
+    -p "$PASSWORD" \
+    -r "$REALM" \
+    --silent \
+    --enable
+
+# Check if user was added successfully
+if [ $? -eq 0 ]; then
+    echo "Successfully added management user: $USERNAME"
+else
+    echo "Failed to add management user. Check permissions or if user already exists."
+    exit 1
+fi
+
+# Create systemd service file for JBoss
+echo "Creating systemd service file..."
+sudo tee /etc/systemd/system/jboss.service > /dev/null <<EOF
+[Unit]
+Description=JBoss EAP 8.0
+After=network.target
+
+[Service]
+Type=forking
+User=$USERNAME
+Group=$USERNAME
+Environment=JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+Environment=JBOSS_HOME=$JBOSS_HOME
+ExecStart=$JBOSS_HOME/bin/standalone.sh -c standalone.xml -b $IP_ADD
+ExecStop=$JBOSS_HOME/bin/jboss-cli.sh --connect command=:shutdown
+TimeoutStartSec=600
+TimeoutStopSec=600
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Reload systemd and enable JBoss service
+sudo systemctl daemon-reload
+sudo systemctl enable jboss.service
+
+echo -e "\n=== JBoss Installation Complete ==="
+echo "Management Console: http://$IP_ADD:9990"
+echo "Application URL: http://$IP_ADD:8080"
+echo "Username: $USERNAME"
+echo "Password: $PASSWORD"
+echo ""
+echo "To start JBoss:"
+echo "  sudo systemctl start jboss"
+echo ""
+echo "To check status:"
+echo "  sudo systemctl status jboss"
+echo ""
+echo "To view logs:"
+echo "  sudo journalctl -u jboss -f"
+
+# Cleanup temporary files
+cd /
+rm -rf /tmp/jboss-install
+
+echo "Installation script completed successfully!"
